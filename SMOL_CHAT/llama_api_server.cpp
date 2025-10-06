@@ -201,7 +201,7 @@ bool send_to_api(const std::string& text, const std::string& api_url) {
     json payload = {{"text", text}};
     std::string body = payload.dump();
 
-    auto res = cli.Post("/endpoint", body, "application/json");
+    auto res = cli.Post("/ai/profile/persona", body, "application/json");
     if (res && res->status == 200) {
         std::cout << "Sent to API: " << res->body << std::endl;
         return true;
