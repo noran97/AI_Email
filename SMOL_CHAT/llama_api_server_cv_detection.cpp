@@ -134,7 +134,6 @@ std::string create_cv_detection_prompt() {
     return prompt;
 }
 
-// NEW: Create prompt for email reply drafting
 std::string create_draft_reply_prompt(const std::string& persona_string, 
                                       const std::string& subject,
                                       const std::string& body,
@@ -150,11 +149,23 @@ std::string create_draft_reply_prompt(const std::string& persona_string,
         prompt += "Note: The email contains attachments (images shown above represent PDF content).\\n\\n";
     }
     
-    prompt += "Instruction: " + instruction + "\\n\\n"
-        "Draft a reply email that:\\n"
+    // Only add instruction if it's not empty
+    if (!instruction.empty()) {
+        prompt += "Instruction: " + instruction + "\\n\\n";
+    }
+    
+    prompt += "Draft a reply email that:\\n"
         "1. Matches the persona's tone and language preference\\n"
-        "2. Follows the given instruction\\n"
-        "3. References attachment content if relevant\\n"
+        "2. ";
+    
+    // Adjust prompt based on whether instruction is provided
+    if (!instruction.empty()) {
+        prompt += "Follows the given instruction\\n";
+    } else {
+        prompt += "Provides an appropriate response to the original email\\n";
+    }
+    
+    prompt += "3. References attachment content if relevant\\n"
         "4. Is professional and appropriate\\n\\n"
         "Return ONLY valid JSON in this exact format with no additional text:\\n"
         "{\\n"
@@ -607,90 +618,89 @@ int main(int argc, char** argv) {
                                "application/json");
             }
         });
+    svr.Post("/ai/inbox/draft-reply", [main_model_path, mmproj_path, &llama_cli_path](
+    const httplib::Request& req, httplib::Response& res) {
+    std::vector<std::string> image_paths;
+    
+    try {
+        json input_json = json::parse(req.body);
         
-        // NEW: Draft Reply Endpoint
-        svr.Post("/ai/inbox/draft-reply", [main_model_path, mmproj_path, &llama_cli_path](
-            const httplib::Request& req, httplib::Response& res) {
-            std::vector<std::string> image_paths;
+        // Validate required fields (instruction is now optional)
+        if (!input_json.contains("email_id") || !input_json.contains("subject") || 
+            !input_json.contains("body") || !input_json.contains("persona_string")) {
+            res.status = 400;
+            res.set_content("{\"error\":\"Missing required fields: email_id, subject, body, persona_string\"}", 
+                           "application/json");
+            return;
+        }
+        
+        std::string email_id = input_json["email_id"];
+        std::string subject = input_json["subject"];
+        std::string body = input_json["body"];
+        std::string persona_string = input_json["persona_string"];
+        
+        // Instruction is now optional - default to empty string if not provided
+        std::string instruction = input_json.value("instruction", "");
+        
+        // Process attachments if present
+        if (input_json.contains("attachments") && input_json["attachments"].is_array()) {
+            json attachments = input_json["attachments"];
             
-            try {
-                json input_json = json::parse(req.body);
+            for (const auto& attachment : attachments) {
+                if (!attachment.contains("filename")) continue;
                 
-                // Validate required fields
-                if (!input_json.contains("email_id") || !input_json.contains("subject") || 
-                    !input_json.contains("body") || !input_json.contains("persona_string") ||
-                    !input_json.contains("instruction")) {
-                    res.status = 400;
-                    res.set_content("{\"error\":\"Missing required fields\"}", 
-                                   "application/json");
-                    return;
-                }
-                
-                std::string email_id = input_json["email_id"];
-                std::string subject = input_json["subject"];
-                std::string body = input_json["body"];
-                std::string persona_string = input_json["persona_string"];
-                std::string instruction = input_json["instruction"];
-                
-                // Process attachments if present
-                if (input_json.contains("attachments") && input_json["attachments"].is_array()) {
-                    json attachments = input_json["attachments"];
-                    
-                    for (const auto& attachment : attachments) {
-                        if (!attachment.contains("filename")) continue;
-                        
-                        std::string filename = attachment["filename"].get<std::string>();
-                        std::cout << "Processing attachment: " << filename << std::endl;
+                std::string filename = attachment["filename"].get<std::string>();
+                std::cout << "Processing attachment: " << filename << std::endl;
 
-                        if (is_pdf_file(filename)) {
-                            try {
-                                std::string pdf_path = "../uploads/" + filename;
-                                std::string temp_dir = "../uploads/temp";
-                                
-                                struct stat st = {0};
-                                if (stat(temp_dir.c_str(), &st) == -1) {
-                                    if (mkdir(temp_dir.c_str(), 0755) != 0) {
-                                        throw std::runtime_error("Failed to create temp directory");
-                                    }
-                                }
-                                
-                                std::string current_image_path = pdf_to_image(pdf_path, temp_dir);
-                                image_paths.push_back(current_image_path);
-                                
-                            } catch (const std::exception& e) {
-                                std::cerr << "Error converting PDF " << filename << ": " 
-                                         << e.what() << std::endl;
-                                continue;
+                if (is_pdf_file(filename)) {
+                    try {
+                        std::string pdf_path = "../uploads/" + filename;
+                        std::string temp_dir = "../uploads/temp";
+                        
+                        struct stat st = {0};
+                        if (stat(temp_dir.c_str(), &st) == -1) {
+                            if (mkdir(temp_dir.c_str(), 0755) != 0) {
+                                throw std::runtime_error("Failed to create temp directory");
                             }
                         }
+                        
+                        std::string current_image_path = pdf_to_image(pdf_path, temp_dir);
+                        image_paths.push_back(current_image_path);
+                        
+                    } catch (const std::exception& e) {
+                        std::cerr << "Error converting PDF " << filename << ": " 
+                                 << e.what() << std::endl;
+                        continue;
                     }
                 }
-                
-                // Generate draft reply
-                std::string model_output = process_draft_reply_with_vision(
-                    image_paths, persona_string, subject, body, instruction,
-                    llama_cli_path, main_model_path, mmproj_path
-                );
-                
-                json reply_data = parse_draft_reply(model_output);
-                
-                cleanup_temp_images(image_paths);
-                
-                json output_json = {
-                    {"email_id", email_id},
-                    {"subject", reply_data["subject"]},
-                    {"draft_reply", reply_data["draft_reply"]}
-                };
-                
-                res.set_content(output_json.dump(2), "application/json");
-                
-            } catch (const std::exception& e) {
-                cleanup_temp_images(image_paths);
-                res.status = 500;
-                res.set_content("{\"error\":\"" + std::string(e.what()) + "\"}", 
-                               "application/json");
             }
-        });
+        }
+        
+        // Generate draft reply
+        std::string model_output = process_draft_reply_with_vision(
+            image_paths, persona_string, subject, body, instruction,
+            llama_cli_path, main_model_path, mmproj_path
+        );
+        
+        json reply_data = parse_draft_reply(model_output);
+        
+        cleanup_temp_images(image_paths);
+        
+        json output_json = {
+            {"email_id", email_id},
+            {"subject", reply_data["subject"]},
+            {"draft_reply", reply_data["draft_reply"]}
+        };
+        
+        res.set_content(output_json.dump(2), "application/json");
+        
+    } catch (const std::exception& e) {
+        cleanup_temp_images(image_paths);
+        res.status = 500;
+        res.set_content("{\"error\":\"" + std::string(e.what()) + "\"}", 
+                       "application/json");
+    }
+});
         svr.Post("/ai/inbox/classify", [main_model_path, mmproj_path, &llama_cli_path](
             const httplib::Request& req, httplib::Response& res) {
             std::vector<std::string> image_paths;
