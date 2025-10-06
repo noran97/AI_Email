@@ -1,3 +1,4 @@
+// llama_api_server_persona.cpp
 #include "httplib.h"
 #include "llama.h"
 #include "common.h"
@@ -174,17 +175,20 @@ std::string create_persona_prompt(const json& input_json) {
         }
     }
     
-    std::string prompt = 
-        "Generate a professional persona description.\n\n"
-        "Name: " + name + "\n"
-        "Position: " + position + "\n"
-        "Department: " + department + "\n"
-        "Language: " + language + "\n"
-        "Sample text: \"" + samples_text + "\"\n\n"
-        "Analyze the tone (formal/semi-formal/casual) and communication style from the sample.\n\n"
-        "Write one complete sentence following this exact structure:\n"
-        + name + " (" + position + ", " + department + "). Preferred language: " + language + ". [Tone] tone inferred from writing samples. [Brief communication patterns].\n\n"
-        "Output only the persona sentence, nothing else:";
+    std::string prompt =
+    "You are a system that generates professional persona summaries based on writing samples.\n"
+    "Use the provided data to infer tone and communication style.\n\n"
+    "Name: " + name + "\n"
+    "Position: " + position + "\n"
+    "Department: " + department + "\n"
+    "Language: " + language + "\n"
+    "Sample text: \"" + samples_text + "\"\n\n"
+    "Analyze the tone (formal / semi-formal / casual) and the communication style (brief, detailed, empathetic, direct, etc.).\n"
+    "Then output **exactly one** sentence in the following format:\n\n"
+    + name + " (" + position + ", " + department + "). Preferred language: " + language +
+    ". [Tone] tone inferred from writing samples. [Brief communication patterns].\n\n"
+    "Respond with **only** this single persona sentence. Do not include examples, explanations, or multiple personas.";
+
     
     return prompt;
 }
@@ -202,7 +206,7 @@ bool send_to_api(const std::string& text, const std::string& api_url) {
         std::cout << "Sent to API: " << res->body << std::endl;
         return true;
     } else {
-        std::cerr << "Failed to send to API. Status: " << (res ? std::to_string(res->status) : "No response") << std::endl;
+        std::cerr << " Status: " << (res ? std::to_string(res->status) : "No response") << std::endl;
         return false;
     }
 }
